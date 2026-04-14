@@ -6,7 +6,9 @@ from picamera2 import Picamera2
 SERVER_URL = "https://8926-221-168-22-205.ngrok-free.app/upload"
 
 camera = Picamera2()
-camera.configure(camera.create_still_configuration())
+camera.configure(camera.create_still_configuration(
+    main={"size": (1280, 720)}
+))
 camera.start()
 time.sleep(1)
 
@@ -20,7 +22,7 @@ try:
             res = requests.post(
                 SERVER_URL,
                 files={"image": ("capture.jpg", buf, "image/jpeg")},
-                timeout=5
+                timeout=15
             )
             print(f"[{time.strftime('%H:%M:%S')}] 전송 완료 - {res.status_code}")
         except requests.RequestException as e:
