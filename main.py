@@ -3,7 +3,7 @@ import time
 import requests
 from picamera2 import Picamera2
 
-SERVER_URL = "https://66af-221-168-22-205.ngrok-free.app/upload"
+SERVER_URL = "https://84c4-221-168-22-205.ngrok-free.app/upload"
 
 camera = Picamera2()
 camera.configure(camera.create_still_configuration(
