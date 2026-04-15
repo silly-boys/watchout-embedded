@@ -22,7 +22,7 @@
 <body>
   <h1>WATCHOUT — 실시간 카메라</h1>
   <div class="controls">
-    <input id="url" type="text" placeholder="http://<Pi-IP>:8080/stream" />
+    <input id="url" type="text" placeholder="http://10.80.162.190:8080/stream" />
     <button onclick="connect()">연결</button>
   </div>
   <img id="stream" alt="카메라 스트림" />
@@ -32,27 +32,88 @@
     const img = document.getElementById("stream");
     const status = document.getElementById("status");
 
-    function connect() {
-      const url = document.getElementById("url").value.trim();
-      if (!url) return;
+    let abortController = null;
+    let prevObjectUrl = null;
 
-      img.src = "";
-      status.textContent = "연결 중...";
-      status.style.color = "#888";
-
-      img.onload = () => {
-        status.textContent = "스트리밍 중";
-        status.style.color = "#4ade80";
-      };
-      img.onerror = () => {
-        status.textContent = "연결 실패 - 주소를 확인하세요";
-        status.style.color = "#f87171";
-      };
-
-      img.src = url;
+    function setStatus(text, color) {
+      status.textContent = text;
+      status.style.color = color;
     }
 
-    // 엔터키로 연결
+    function getStreamUrl(input) {
+      return input.replace(/\/snapshot$/, "") + "/stream";
+    }
+
+    function concat(a, b) {
+      const c = new Uint8Array(a.length + b.length);
+      c.set(a, 0);
+      c.set(b, a.length);
+      return c;
+    }
+
+    function findSequence(buf, seq) {
+      outer: for (let i = 0; i <= buf.length - seq.length; i++) {
+        for (let j = 0; j < seq.length; j++) {
+          if (buf[i + j] !== seq[j]) continue outer;
+        }
+        return i;
+      }
+      return -1;
+    }
+
+    async function startStream(streamUrl) {
+      abortController = new AbortController();
+      setStatus("연결 중...", "#888");
+
+      try {
+        const res = await fetch(streamUrl, {
+          headers: { "ngrok-skip-browser-warning": "1" },
+          signal: abortController.signal,
+        });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+
+        setStatus("스트리밍 중", "#4ade80");
+
+        const reader = res.body.getReader();
+        let buf = new Uint8Array();
+        const SOI = [0xFF, 0xD8]; // JPEG 시작
+        const EOI = [0xFF, 0xD9]; // JPEG 끝
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buf = concat(buf, value);
+
+          const start = findSequence(buf, SOI);
+          const end = findSequence(buf, EOI);
+
+          if (start !== -1 && end !== -1 && end > start) {
+            const jpeg = buf.slice(start, end + 2);
+            buf = buf.slice(end + 2);
+
+            const blob = new Blob([jpeg], { type: "image/jpeg" });
+            const url = URL.createObjectURL(blob);
+            img.src = url;
+            if (prevObjectUrl) URL.revokeObjectURL(prevObjectUrl);
+            prevObjectUrl = url;
+          }
+        }
+      } catch (e) {
+        if (e.name !== "AbortError") {
+          setStatus(`연결 끊김 - ${e.message}`, "#f87171");
+        }
+      }
+    }
+
+    function connect() {
+      const input = document.getElementById("url").value.trim();
+      if (!input) return;
+
+      if (abortController) abortController.abort();
+      startStream(getStreamUrl(input));
+    }
+
     document.getElementById("url").addEventListener("keydown", (e) => {
       if (e.key === "Enter") connect();
     });
