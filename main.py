@@ -47,6 +47,13 @@ class StreamHandler(BaseHTTPRequestHandler):
     def log_message(self, format, *args):
         pass
 
+    def do_OPTIONS(self):
+        self.send_response(204)
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Headers", "*")
+        self.send_header("Access-Control-Allow-Methods", "GET, OPTIONS")
+        self.end_headers()
+
     def do_GET(self):
         if self.path == "/stream":
             self.send_response(200)
