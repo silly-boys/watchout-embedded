@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <title>WatchOut - 실시간 카메라</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { background: #0f0f0f; color: #fff; font-family: sans-serif;
+           display: flex; flex-direction: column; align-items: center;
+           justify-content: center; height: 100vh; gap: 16px; }
+    h1 { font-size: 1.1rem; letter-spacing: 0.1em; color: #aaa; }
+    img { width: 100%; max-width: 900px; border-radius: 8px; background: #1a1a1a; }
+    .controls { display: flex; gap: 8px; align-items: center; }
+    input { background: #1e1e1e; border: 1px solid #333; color: #fff;
+            padding: 6px 12px; border-radius: 6px; font-size: 0.85rem; width: 260px; }
+    button { padding: 6px 16px; background: #3b82f6; color: #fff;
+             border: none; border-radius: 6px; cursor: pointer; font-size: 0.85rem; }
+    button:hover { background: #2563eb; }
+    #status { font-size: 0.8rem; color: #555; }
+  </style>
+</head>
+<body>
+  <h1>WATCHOUT — 실시간 카메라</h1>
+  <div class="controls">
+    <input id="url" type="text" placeholder="http://<Pi-IP>:8080/stream" />
+    <button onclick="connect()">연결</button>
+  </div>
+  <img id="stream" alt="카메라 스트림" />
+  <p id="status">주소를 입력하고 연결 버튼을 누르세요.</p>
+
+  <script>
+    const img = document.getElementById("stream");
+    const status = document.getElementById("status");
+
+    function connect() {
+      const url = document.getElementById("url").value.trim();
+      if (!url) return;
+
+      img.src = "";
+      status.textContent = "연결 중...";
+      status.style.color = "#888";
+
+      img.onload = () => {
+        status.textContent = "스트리밍 중";
+        status.style.color = "#4ade80";
+      };
+      img.onerror = () => {
+        status.textContent = "연결 실패 - 주소를 확인하세요";
+        status.style.color = "#f87171";
+      };
+
+      img.src = url;
+    }
+
+    // 엔터키로 연결
+    document.getElementById("url").addEventListener("keydown", (e) => {
+      if (e.key === "Enter") connect();
+    });
+  </script>
+</body>
+</html>
