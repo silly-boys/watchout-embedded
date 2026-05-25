@@ -1,100 +1,81 @@
-import io
-import time
+import os
+import signal
 import threading
-import requests
-from http.server import BaseHTTPRequestHandler, HTTPServer
-from picamera2 import Picamera2
+import time
 
-SERVER_URL = "https://84c4-221-168-22-205.ngrok-free.app/upload"
-STREAM_PORT = 8080
-FPS = 15
-UPLOAD_INTERVAL = 5
-
-latest_frame = None
-frame_lock = threading.Lock()
+from runtime import MEMORY_LIMIT_GB, apply_memory_limit, configure_native_runtime
 
 
-def capture_loop(camera):
-    global latest_frame
-    while True:
-        buf = io.BytesIO()
-        camera.capture_file(buf, format="jpeg")
-        buf.seek(0)
-        with frame_lock:
-            latest_frame = buf.read()
-        time.sleep(1 / FPS)
+configure_native_runtime()
+
+from ai_runner import analysis_loop, init_detectors
+from camera import capture_loop, create_camera
+from state import AnalysisStore, FrameStore
+from stream_server import create_handler, create_server
+
+STREAM_PORT = int(os.getenv("WATCHOUT_STREAM_PORT", "8080"))
+FPS = int(os.getenv("WATCHOUT_FPS", "15"))
+AI_MIN_INTERVAL = float(os.getenv("WATCHOUT_AI_INTERVAL", "0"))
+CAMERA_SIZE = (
+    int(os.getenv("WATCHOUT_CAMERA_WIDTH", "1280")),
+    int(os.getenv("WATCHOUT_CAMERA_HEIGHT", "720")),
+)
 
 
-def upload_loop():
-    while True:
-        time.sleep(UPLOAD_INTERVAL)
-        with frame_lock:
-            frame = latest_frame
-        if frame is None:
-            continue
-        try:
-            res = requests.post(
-                SERVER_URL,
-                files={"image": ("capture.jpg", io.BytesIO(frame), "image/jpeg")},
-                timeout=15,
-            )
-            print(f"[{time.strftime('%H:%M:%S')}] 전송 완료 - {res.status_code}")
-        except requests.RequestException as e:
-            print(f"[{time.strftime('%H:%M:%S')}] 전송 실패 - {e}")
+def main() -> None:
+    apply_memory_limit()
 
+    frames = FrameStore()
+    analyses = AnalysisStore()
+    stop_event = threading.Event()
 
-class StreamHandler(BaseHTTPRequestHandler):
-    def log_message(self, format, *args):
-        pass
+    print(f"[{time.strftime('%H:%M:%S')}] AI 감지기 초기화 중...")
+    detectors = init_detectors()
+    print(f"[{time.strftime('%H:%M:%S')}] AI 감지기 초기화 완료")
 
-    def do_OPTIONS(self):
-        self.send_response(204)
-        self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Access-Control-Allow-Headers", "*")
-        self.send_header("Access-Control-Allow-Methods", "GET, OPTIONS")
-        self.end_headers()
-
-    def do_GET(self):
-        if self.path == "/stream":
-            self.send_response(200)
-            self.send_header("Content-Type", "multipart/x-mixed-replace; boundary=frame")
-            self.send_header("Cache-Control", "no-cache")
-            self.send_header("Access-Control-Allow-Origin", "*")
-            self.end_headers()
-            try:
-                while True:
-                    with frame_lock:
-                        frame = latest_frame
-                    if frame is None:
-                        time.sleep(0.05)
-                        continue
-                    self.wfile.write(b"--frame\r\n")
-                    self.wfile.write(b"Content-Type: image/jpeg\r\n\r\n")
-                    self.wfile.write(frame)
-                    self.wfile.write(b"\r\n")
-                    time.sleep(1 / FPS)
-            except (BrokenPipeError, ConnectionResetError):
-                pass
-
-        else:
-            self.send_error(404)
-
-
-if __name__ == "__main__":
-    camera = Picamera2()
-    camera.configure(
-        camera.create_video_configuration(main={"size": (1280, 720)})
-    )
+    camera = create_camera(CAMERA_SIZE)
     camera.start()
     time.sleep(1)
 
-    threading.Thread(target=capture_loop, args=(camera,), daemon=True).start()
-    threading.Thread(target=upload_loop, daemon=True).start()
+    threading.Thread(
+        target=capture_loop,
+        args=(camera, frames, stop_event, FPS),
+        daemon=True,
+    ).start()
+    threading.Thread(
+        target=analysis_loop,
+        args=(detectors, frames, analyses, stop_event, AI_MIN_INTERVAL),
+        daemon=True,
+    ).start()
 
-    print(f"[{time.strftime('%H:%M:%S')}] 시작 - 스트림: http://0.0.0.0:{STREAM_PORT}")
+    def request_shutdown(_signum, _frame):
+        stop_event.set()
+
+    signal.signal(signal.SIGTERM, request_shutdown)
+    signal.signal(signal.SIGINT, request_shutdown)
+
+    health = {
+        "status": "ok",
+        "memory_limit_gb": MEMORY_LIMIT_GB,
+        "ai_min_interval_sec": AI_MIN_INTERVAL,
+        "analysis_mode": "continuous_latest_frame",
+        "stream": f"http://0.0.0.0:{STREAM_PORT}/stream",
+    }
+    handler = create_handler(frames, analyses, stop_event, FPS, health)
+    server = create_server("0.0.0.0", STREAM_PORT, handler)
+
+    print(f"[{time.strftime('%H:%M:%S')}] 시작 - 스트림: http://0.0.0.0:{STREAM_PORT}/stream")
+    print(f"[{time.strftime('%H:%M:%S')}] 분석 결과: http://0.0.0.0:{STREAM_PORT}/analysis")
+
     try:
-        HTTPServer(("0.0.0.0", STREAM_PORT), StreamHandler).serve_forever()
-    except KeyboardInterrupt:
-        print("종료")
+        while not stop_event.is_set():
+            server.handle_request()
     finally:
+        stop_event.set()
+        server.server_close()
         camera.stop()
+        print("종료")
+
+
+if __name__ == "__main__":
+    main()

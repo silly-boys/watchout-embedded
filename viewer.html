@@ -17,6 +17,10 @@
              border: none; border-radius: 6px; cursor: pointer; font-size: 0.85rem; }
     button:hover { background: #2563eb; }
     #status { font-size: 0.8rem; color: #555; }
+    #analysis { width: 100%; max-width: 900px; min-height: 56px; padding: 12px;
+                border: 1px solid #252525; border-radius: 8px; background: #151515;
+                color: #aaa; font-size: 0.82rem; line-height: 1.45; white-space: pre-wrap; }
+    #analysis.alert { border-color: #7f1d1d; color: #fecaca; background: #1f1212; }
   </style>
 </head>
 <body>
@@ -27,13 +31,16 @@
   </div>
   <img id="stream" alt="카메라 스트림" />
   <p id="status">주소를 입력하고 연결 버튼을 누르세요.</p>
+  <div id="analysis">분석 대기 중</div>
 
   <script>
     const img = document.getElementById("stream");
     const status = document.getElementById("status");
+    const analysis = document.getElementById("analysis");
 
     let abortController = null;
     let prevObjectUrl = null;
+    let analysisTimer = null;
 
     function setStatus(text, color) {
       status.textContent = text;
@@ -41,7 +48,11 @@
     }
 
     function getStreamUrl(input) {
-      return input.replace(/\/snapshot$/, "") + "/stream";
+      return input.replace(/\/(snapshot|stream)$/, "") + "/stream";
+    }
+
+    function getAnalysisUrl(streamUrl) {
+      return streamUrl.replace(/\/stream$/, "") + "/analysis";
     }
 
     function concat(a, b) {
@@ -61,13 +72,42 @@
       return -1;
     }
 
+    async function pollAnalysis(analysisUrl) {
+      try {
+        const res = await fetch(analysisUrl);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        const alerts = data.alerts || [];
+        analysis.classList.toggle("alert", alerts.length > 0);
+        if (!data.timestamp) {
+          analysis.textContent = "분석 준비 중";
+          return;
+        }
+        if (alerts.length === 0) {
+          analysis.textContent = `${data.timestamp}\n이상 없음 (${data.elapsed_ms}ms)`;
+          return;
+        }
+        const lines = alerts.map((name) => {
+          const item = data.summary[name];
+          return `- ${name}: ${item.message}`;
+        });
+        analysis.textContent = `${data.timestamp}\n이상 감지\n${lines.join("\n")}`;
+      } catch (e) {
+        analysis.classList.remove("alert");
+        analysis.textContent = `분석 연결 끊김 - ${e.message}`;
+      }
+    }
+
     async function startStream(streamUrl) {
       abortController = new AbortController();
       setStatus("연결 중...", "#888");
+      if (analysisTimer) clearInterval(analysisTimer);
+      const analysisUrl = getAnalysisUrl(streamUrl);
+      pollAnalysis(analysisUrl);
+      analysisTimer = setInterval(() => pollAnalysis(analysisUrl), 1000);
 
       try {
         const res = await fetch(streamUrl, {
-          headers: { "ngrok-skip-browser-warning": "1" },
           signal: abortController.signal,
         });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -111,6 +151,7 @@
       if (!input) return;
 
       if (abortController) abortController.abort();
+      if (analysisTimer) clearInterval(analysisTimer);
       startStream(getStreamUrl(input));
     }
 
