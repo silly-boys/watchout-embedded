@@ -19,6 +19,7 @@ from PIL import Image
 
 from config import (
     FALL_ASPECT_THRESHOLD,
+    FALL_FLOW_WIDTH,
     FALL_FLOW_THRESHOLD,
     FALL_MAX_BBOX_RATIO,
     FALL_STILLNESS_FLOW_MIN,
@@ -50,13 +51,22 @@ class FallDetector(BaseDetector):
             model_path = "shared person model"
         self._model = model
 
-        self._prev_gray: np.ndarray | None = None
+        self._prev_flow_gray: np.ndarray | None = None
         # deque에 (flow_mean, aspect_ratio) 저장 → stillness 판단에 사용
         self._history: deque[dict] = deque(maxlen=FALL_STILLNESS_FRAMES)
         logger.info("FallDetector: 모델 로드 (%s)", model_path)
 
     def _to_gray(self, img_np: np.ndarray) -> np.ndarray:
         return cv2.cvtColor(img_np, cv2.COLOR_RGB2GRAY)
+
+    def _to_flow_gray(self, gray: np.ndarray) -> tuple[np.ndarray, float]:
+        h, w = gray.shape[:2]
+        flow_w = min(FALL_FLOW_WIDTH, w)
+        flow_h = max(1, int(h * (flow_w / w)))
+        if flow_w == w and flow_h == h:
+            return gray, 1.0
+        resized = cv2.resize(gray, (flow_w, flow_h), interpolation=cv2.INTER_AREA)
+        return resized, w / flow_w
 
     def detect(self, image_bytes: bytes) -> DetectionResult:
         try:
@@ -66,17 +76,25 @@ class FallDetector(BaseDetector):
 
             # ── Optical Flow ──────────────────────────────────────────
             flow_mean = 0.0
-            if self._prev_gray is not None:
-                prev = cv2.resize(self._prev_gray, (gray.shape[1], gray.shape[0]))
-                flow = cv2.calcOpticalFlowFarneback(
-                    prev, gray, None,
-                    pyr_scale=0.5, levels=3, winsize=15,
-                    iterations=3, poly_n=5, poly_sigma=1.2, flags=0,
-                )
-                magnitude = np.sqrt(flow[..., 0] ** 2 + flow[..., 1] ** 2)
-                flow_mean = float(magnitude.mean())
+            flow_gray, flow_scale = self._to_flow_gray(gray)
+            if self._prev_flow_gray is not None:
+                try:
+                    prev = cv2.resize(
+                        self._prev_flow_gray,
+                        (flow_gray.shape[1], flow_gray.shape[0]),
+                        interpolation=cv2.INTER_AREA,
+                    )
+                    flow = cv2.calcOpticalFlowFarneback(
+                        prev, flow_gray, None,
+                        pyr_scale=0.5, levels=2, winsize=11,
+                        iterations=2, poly_n=5, poly_sigma=1.1, flags=0,
+                    )
+                    magnitude = np.sqrt(flow[..., 0] ** 2 + flow[..., 1] ** 2)
+                    flow_mean = float(magnitude.mean() * flow_scale)
+                except cv2.error as e:
+                    logger.warning("FallDetector optical flow skipped: %s", e)
 
-            self._prev_gray = gray
+            self._prev_flow_gray = flow_gray
 
             # ── Person 탐지 ───────────────────────────────────────────
             results = self._model(img_np, conf=PERSON_CONF, verbose=False)[0]

@@ -11,7 +11,6 @@ def init_detectors():
     import torch
     from ultralytics import YOLO
     from detectors import (
-        AnomalyDetector,
         FallDetector,
         FireSmokeDetector,
         HardhatDetector,
@@ -27,7 +26,6 @@ def init_detectors():
         "hardhat": HardhatDetector(),
         "virtual_fence": VirtualFenceDetector(model=person_model),
         "fall": FallDetector(model=person_model),
-        "anomaly": AnomalyDetector(),
     }
 
 
