@@ -1,71 +1,115 @@
+import asyncio
 import json
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+
+import av
+import numpy as np
+from aiohttp import web
+from aiortc import RTCPeerConnection, RTCSessionDescription, VideoStreamTrack
 
 
-def create_handler(frames, analyses, stop_event, fps: int, health: dict):
-    class StreamHandler(BaseHTTPRequestHandler):
-        def log_message(self, format, *args):
-            pass
+class PiCameraTrack(VideoStreamTrack):
+    kind = "video"
 
-        def _send_cors(self):
-            self.send_header("Access-Control-Allow-Origin", "*")
-            self.send_header("Access-Control-Allow-Headers", "*")
-            self.send_header("Access-Control-Allow-Methods", "GET, OPTIONS")
+    def __init__(self, frames, fallback_size: tuple[int, int]) -> None:
+        super().__init__()
+        self._frames = frames
+        self._fallback_size = fallback_size
 
-        def _send_json(self, payload, status=200):
-            body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
-            self.send_response(status)
-            self.send_header("Content-Type", "application/json; charset=utf-8")
-            self.send_header("Content-Length", str(len(body)))
-            self._send_cors()
-            self.end_headers()
-            self.wfile.write(body)
-
-        def do_OPTIONS(self):
-            self.send_response(204)
-            self._send_cors()
-            self.end_headers()
-
-        def do_GET(self):
-            if self.path == "/stream":
-                self.send_response(200)
-                self.send_header("Content-Type", "multipart/x-mixed-replace; boundary=frame")
-                self.send_header("Cache-Control", "no-cache")
-                self._send_cors()
-                self.end_headers()
-                self._stream_frames()
-                return
-
-            if self.path == "/analysis":
-                self._send_json(analyses.get())
-                return
-
-            if self.path == "/health":
-                self._send_json(health)
-                return
-
-            self.send_error(404)
-
-        def _stream_frames(self):
-            frame_delay = 1 / max(fps, 1)
-            try:
-                while not stop_event.is_set():
-                    frame, _seq = frames.get()
-                    if frame is None:
-                        stop_event.wait(0.05)
-                        continue
-                    self.wfile.write(b"--frame\r\n")
-                    self.wfile.write(b"Content-Type: image/jpeg\r\n\r\n")
-                    self.wfile.write(frame)
-                    self.wfile.write(b"\r\n")
-                    stop_event.wait(frame_delay)
-            except (BrokenPipeError, ConnectionResetError):
-                pass
-
-    return StreamHandler
+    async def recv(self):
+        pts, time_base = await self.next_timestamp()
+        arr, _seq = self._frames.get_video()
+        if arr is None:
+            width, height = self._fallback_size
+            arr = np.zeros((height, width, 3), dtype=np.uint8)
+        frame = av.VideoFrame.from_ndarray(arr, format="bgr24")
+        frame.pts = pts
+        frame.time_base = time_base
+        return frame
 
 
-def create_server(host: str, port: int, handler) -> ThreadingHTTPServer:
-    server = ThreadingHTTPServer((host, port), handler)
-    server.timeout = 0.5
-    return server
+class WebRTCServer:
+    def __init__(self, frames, stop_event, camera_size: tuple[int, int]) -> None:
+        self._frames = frames
+        self._stop_event = stop_event
+        self._camera_size = camera_size
+        self._pcs: set[RTCPeerConnection] = set()
+
+    async def offer(self, request: web.Request) -> web.Response:
+        params = await request.json()
+        offer = RTCSessionDescription(sdp=params["sdp"], type=params["type"])
+
+        pc = RTCPeerConnection()
+        self._pcs.add(pc)
+
+        @pc.on("connectionstatechange")
+        async def on_state():
+            print(f"[WebRTC] {pc.connectionState}")
+            if pc.connectionState in ("failed", "closed", "disconnected"):
+                await pc.close()
+                self._pcs.discard(pc)
+
+        pc.addTrack(PiCameraTrack(self._frames, self._camera_size))
+        await pc.setRemoteDescription(offer)
+
+        answer = await pc.createAnswer()
+        await pc.setLocalDescription(answer)
+
+        for _ in range(200):
+            if pc.iceGatheringState == "complete":
+                break
+            await asyncio.sleep(0.05)
+
+        return web.Response(
+            content_type="application/json",
+            headers={
+                "Access-Control-Allow-Origin": "*",
+                "Access-Control-Allow-Headers": "Content-Type",
+            },
+            text=json.dumps({
+                "sdp": pc.localDescription.sdp,
+                "type": pc.localDescription.type,
+            }),
+        )
+
+    async def viewer(self, _request: web.Request) -> web.FileResponse:
+        return web.FileResponse(Path(__file__).parent / "viewer.html")
+
+    async def options(self, _request: web.Request) -> web.Response:
+        return web.Response(
+            status=204,
+            headers={
+                "Access-Control-Allow-Origin": "*",
+                "Access-Control-Allow-Methods": "POST, OPTIONS",
+                "Access-Control-Allow-Headers": "Content-Type",
+            },
+        )
+
+    async def shutdown(self) -> None:
+        self._stop_event.set()
+        await asyncio.gather(*(pc.close() for pc in list(self._pcs)), return_exceptions=True)
+        self._pcs.clear()
+
+    def app(self) -> web.Application:
+        app = web.Application()
+        app.router.add_get("/", self.viewer)
+        app.router.add_post("/offer", self.offer)
+        app.router.add_route("OPTIONS", "/offer", self.options)
+        app.on_shutdown.append(self._on_shutdown)
+        return app
+
+    async def _on_shutdown(self, _app: web.Application) -> None:
+        await self.shutdown()
+
+async def run_server(host: str, port: int, frames, stop_event, camera_size: tuple[int, int]) -> None:
+    server = WebRTCServer(frames, stop_event, camera_size)
+    runner = web.AppRunner(server.app())
+    await runner.setup()
+    site = web.TCPSite(runner, host, port)
+    await site.start()
+    print(f"WebRTC 서버 시작: http://{host}:{port}/offer")
+    try:
+        while not stop_event.is_set():
+            await asyncio.sleep(0.2)
+    finally:
+        await runner.cleanup()

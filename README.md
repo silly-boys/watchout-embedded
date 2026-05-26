@@ -1,6 +1,6 @@
 # WatchOut Embedded
 
-Raspberry Pi camera application that streams live MJPEG video and analyzes the latest camera frame locally with WatchOut AI detectors. It does not upload frames to an external AI server.
+Raspberry Pi camera application that streams live WebRTC video and analyzes the latest camera frame locally with WatchOut AI detectors. It does not upload frames to an external AI server.
 
 ## Runtime Flow
 
@@ -8,9 +8,8 @@ Raspberry Pi camera application that streams live MJPEG video and analyzes the l
 2. `camera.py` captures JPEG frames from `Picamera2` at `WATCHOUT_FPS` and writes only the newest frame into `FrameStore`.
 3. `ai_runner.py` watches `FrameStore` for a new frame sequence number and analyzes the newest frame immediately.
 4. `stream_server.py` exposes:
-   - `GET /stream`: MJPEG camera stream
-   - `GET /analysis`: latest AI analysis JSON
-   - `GET /health`: runtime status
+   - `GET /`: browser viewer
+   - `POST /offer`: WebRTC signaling endpoint
 5. Alerts are saved as JSON files under `alerts/`.
 
 ## Environment Variables
@@ -26,4 +25,10 @@ Raspberry Pi camera application that streams live MJPEG video and analyzes the l
 
 ```bash
 python3 main.py
+```
+
+Or after setup:
+
+```bash
+./start.sh
 ```

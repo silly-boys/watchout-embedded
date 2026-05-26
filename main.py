@@ -1,9 +1,10 @@
+import asyncio
 import os
 import signal
 import threading
 import time
 
-from runtime import MEMORY_LIMIT_GB, apply_memory_limit, configure_native_runtime
+from runtime import apply_memory_limit, configure_native_runtime
 
 
 configure_native_runtime()
@@ -11,7 +12,7 @@ configure_native_runtime()
 from ai_runner import analysis_loop, init_detectors
 from camera import capture_loop, create_camera
 from state import AnalysisStore, FrameStore
-from stream_server import create_handler, create_server
+from stream_server import run_server
 
 STREAM_PORT = int(os.getenv("WATCHOUT_STREAM_PORT", "8080"))
 FPS = int(os.getenv("WATCHOUT_FPS", "15"))
@@ -54,25 +55,12 @@ def main() -> None:
     signal.signal(signal.SIGTERM, request_shutdown)
     signal.signal(signal.SIGINT, request_shutdown)
 
-    health = {
-        "status": "ok",
-        "memory_limit_gb": MEMORY_LIMIT_GB,
-        "ai_min_interval_sec": AI_MIN_INTERVAL,
-        "analysis_mode": "continuous_latest_frame",
-        "stream": f"http://0.0.0.0:{STREAM_PORT}/stream",
-    }
-    handler = create_handler(frames, analyses, stop_event, FPS, health)
-    server = create_server("0.0.0.0", STREAM_PORT, handler)
-
-    print(f"[{time.strftime('%H:%M:%S')}] 시작 - 스트림: http://0.0.0.0:{STREAM_PORT}/stream")
-    print(f"[{time.strftime('%H:%M:%S')}] 분석 결과: http://0.0.0.0:{STREAM_PORT}/analysis")
+    print(f"[{time.strftime('%H:%M:%S')}] 시작 - WebRTC: http://0.0.0.0:{STREAM_PORT}")
 
     try:
-        while not stop_event.is_set():
-            server.handle_request()
+        asyncio.run(run_server("0.0.0.0", STREAM_PORT, frames, stop_event, CAMERA_SIZE))
     finally:
         stop_event.set()
-        server.server_close()
         camera.stop()
         print("종료")
 

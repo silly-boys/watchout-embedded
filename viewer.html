@@ -9,7 +9,7 @@
            display: flex; flex-direction: column; align-items: center;
            justify-content: center; height: 100vh; gap: 16px; }
     h1 { font-size: 1.1rem; letter-spacing: 0.1em; color: #aaa; }
-    img { width: 100%; max-width: 900px; border-radius: 8px; background: #1a1a1a; }
+    video { width: 100%; max-width: 900px; border-radius: 8px; background: #1a1a1a; }
     .controls { display: flex; gap: 8px; align-items: center; }
     input { background: #1e1e1e; border: 1px solid #333; color: #fff;
             padding: 6px 12px; border-radius: 6px; font-size: 0.85rem; width: 260px; }
@@ -17,142 +17,101 @@
              border: none; border-radius: 6px; cursor: pointer; font-size: 0.85rem; }
     button:hover { background: #2563eb; }
     #status { font-size: 0.8rem; color: #555; }
-    #analysis { width: 100%; max-width: 900px; min-height: 56px; padding: 12px;
-                border: 1px solid #252525; border-radius: 8px; background: #151515;
-                color: #aaa; font-size: 0.82rem; line-height: 1.45; white-space: pre-wrap; }
-    #analysis.alert { border-color: #7f1d1d; color: #fecaca; background: #1f1212; }
   </style>
 </head>
 <body>
   <h1>WATCHOUT — 실시간 카메라</h1>
   <div class="controls">
-    <input id="url" type="text" placeholder="http://10.80.162.190:8080/stream" />
+    <input id="url" type="text" placeholder="http://10.80.162.190:8080" value="" />
     <button onclick="connect()">연결</button>
   </div>
-  <img id="stream" alt="카메라 스트림" />
+  <video id="stream" autoplay playsinline muted></video>
   <p id="status">주소를 입력하고 연결 버튼을 누르세요.</p>
-  <div id="analysis">분석 대기 중</div>
 
   <script>
-    const img = document.getElementById("stream");
+    const video = document.getElementById("stream");
     const status = document.getElementById("status");
-    const analysis = document.getElementById("analysis");
+    let pc = null;
 
-    let abortController = null;
-    let prevObjectUrl = null;
-    let analysisTimer = null;
+    // 서버에서 열린 경우 URL 자동 입력
+    if (location.origin !== "null") {
+      document.getElementById("url").value = location.origin;
+    }
 
     function setStatus(text, color) {
       status.textContent = text;
-      status.style.color = color;
+      status.style.color = color || "#555";
     }
 
-    function getStreamUrl(input) {
-      return input.replace(/\/(snapshot|stream)$/, "") + "/stream";
-    }
-
-    function getAnalysisUrl(streamUrl) {
-      return streamUrl.replace(/\/stream$/, "") + "/analysis";
-    }
-
-    function concat(a, b) {
-      const c = new Uint8Array(a.length + b.length);
-      c.set(a, 0);
-      c.set(b, a.length);
-      return c;
-    }
-
-    function findSequence(buf, seq) {
-      outer: for (let i = 0; i <= buf.length - seq.length; i++) {
-        for (let j = 0; j < seq.length; j++) {
-          if (buf[i + j] !== seq[j]) continue outer;
-        }
-        return i;
-      }
-      return -1;
-    }
-
-    async function pollAnalysis(analysisUrl) {
-      try {
-        const res = await fetch(analysisUrl);
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const data = await res.json();
-        const alerts = data.alerts || [];
-        analysis.classList.toggle("alert", alerts.length > 0);
-        if (!data.timestamp) {
-          analysis.textContent = "분석 준비 중";
-          return;
-        }
-        if (alerts.length === 0) {
-          analysis.textContent = `${data.timestamp}\n이상 없음 (${data.elapsed_ms}ms)`;
-          return;
-        }
-        const lines = alerts.map((name) => {
-          const item = data.summary[name];
-          return `- ${name}: ${item.message}`;
-        });
-        analysis.textContent = `${data.timestamp}\n이상 감지\n${lines.join("\n")}`;
-      } catch (e) {
-        analysis.classList.remove("alert");
-        analysis.textContent = `분석 연결 끊김 - ${e.message}`;
-      }
-    }
-
-    async function startStream(streamUrl) {
-      abortController = new AbortController();
-      setStatus("연결 중...", "#888");
-      if (analysisTimer) clearInterval(analysisTimer);
-      const analysisUrl = getAnalysisUrl(streamUrl);
-      pollAnalysis(analysisUrl);
-      analysisTimer = setInterval(() => pollAnalysis(analysisUrl), 1000);
-
-      try {
-        const res = await fetch(streamUrl, {
-          signal: abortController.signal,
-        });
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-
-        setStatus("스트리밍 중", "#4ade80");
-
-        const reader = res.body.getReader();
-        let buf = new Uint8Array();
-        const SOI = [0xFF, 0xD8]; // JPEG 시작
-        const EOI = [0xFF, 0xD9]; // JPEG 끝
-
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-
-          buf = concat(buf, value);
-
-          const start = findSequence(buf, SOI);
-          const end = findSequence(buf, EOI);
-
-          if (start !== -1 && end !== -1 && end > start) {
-            const jpeg = buf.slice(start, end + 2);
-            buf = buf.slice(end + 2);
-
-            const blob = new Blob([jpeg], { type: "image/jpeg" });
-            const url = URL.createObjectURL(blob);
-            img.src = url;
-            if (prevObjectUrl) URL.revokeObjectURL(prevObjectUrl);
-            prevObjectUrl = url;
-          }
-        }
-      } catch (e) {
-        if (e.name !== "AbortError") {
-          setStatus(`연결 끊김 - ${e.message}`, "#f87171");
-        }
-      }
-    }
-
-    function connect() {
+    async function connect() {
       const input = document.getElementById("url").value.trim();
       if (!input) return;
 
-      if (abortController) abortController.abort();
-      if (analysisTimer) clearInterval(analysisTimer);
-      startStream(getStreamUrl(input));
+      const base = input.replace(/\/(offer|stream)\/?$/, "").replace(/\/$/, "");
+      const offerUrl = base + "/offer";
+
+      if (pc) {
+        pc.close();
+        pc = null;
+        video.srcObject = null;
+      }
+
+      setStatus("연결 중...", "#888");
+
+      // 로컬 변수로 캡처 — 이후 connect() 재호출로 pc가 바뀌어도 이 시도는 독립적으로 동작
+      const localPc = new RTCPeerConnection({
+        iceServers: [{ urls: "stun:stun.l.google.com:19302" }]
+      });
+      pc = localPc;
+
+      try {
+        localPc.ontrack = (e) => {
+          if (localPc !== pc) return;
+          video.srcObject = e.streams[0];
+          setStatus("스트리밍 중", "#4ade80");
+        };
+
+        localPc.onconnectionstatechange = () => {
+          if (localPc !== pc) return;
+          const s = localPc.connectionState;
+          if (s === "failed" || s === "disconnected") {
+            setStatus("연결 끊김 - " + s, "#f87171");
+          }
+        };
+
+        localPc.addTransceiver("video", { direction: "recvonly" });
+
+        const offer = await localPc.createOffer();
+        await localPc.setLocalDescription(offer);
+
+        // Wait for ICE gathering (max 5s)
+        await new Promise(resolve => {
+          if (localPc.iceGatheringState === "complete") { resolve(); return; }
+          const timeout = setTimeout(resolve, 5000);
+          localPc.addEventListener("icegatheringstatechange", () => {
+            if (localPc.iceGatheringState === "complete") { clearTimeout(timeout); resolve(); }
+          });
+        });
+
+        // 이미 다른 connect()가 실행됐으면 중단
+        if (localPc !== pc) return;
+
+        const res = await fetch(offerUrl, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ sdp: localPc.localDescription.sdp, type: localPc.localDescription.type })
+        });
+
+        if (!res.ok) throw new Error("서버 오류 " + res.status);
+
+        const answer = await res.json();
+
+        if (localPc !== pc) return;
+        await localPc.setRemoteDescription(answer);
+
+      } catch (e) {
+        if (localPc === pc) setStatus("연결 실패 - " + e.message, "#f87171");
+      }
     }
 
     document.getElementById("url").addEventListener("keydown", (e) => {

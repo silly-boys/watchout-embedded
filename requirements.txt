@@ -1,4 +1,6 @@
 picamera2
+aiohttp
+aiortc
 ultralytics
 opencv-python-headless
 Pillow
