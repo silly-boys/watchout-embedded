@@ -68,11 +68,12 @@ class FallDetector(BaseDetector):
         resized = cv2.resize(gray, (flow_w, flow_h), interpolation=cv2.INTER_AREA)
         return resized, w / flow_w
 
-    def detect(self, image_bytes: bytes) -> DetectionResult:
+    def detect(self, image_bytes: bytes, image_np: np.ndarray | None = None, person_results=None) -> DetectionResult:
         try:
-            img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
-            img_np = np.array(img)
-            gray = self._to_gray(img_np)
+            if image_np is None:
+                img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+                image_np = np.array(img)
+            gray = self._to_gray(image_np)
 
             # ── Optical Flow ──────────────────────────────────────────
             flow_mean = 0.0
@@ -97,10 +98,10 @@ class FallDetector(BaseDetector):
             self._prev_flow_gray = flow_gray
 
             # ── Person 탐지 ───────────────────────────────────────────
-            results = self._model(img_np, conf=PERSON_CONF, verbose=False)[0]
+            results = person_results if person_results is not None else self._model(image_np, conf=PERSON_CONF, verbose=False)[0]
             persons: list[PersonState] = []
 
-            img_w = img_np.shape[1]
+            img_w = image_np.shape[1]
             for box in results.boxes:
                 cls_id = int(box.cls)
                 if results.names[cls_id] != "person":

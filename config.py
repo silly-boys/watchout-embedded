@@ -14,6 +14,8 @@ POSE_MODEL = MODELS_DIR / "yolov8n-pose.pt"       # 기본 YOLOv8 pose
 
 # ── 임계값 ───────────────────────────────────────────────
 PERSON_CONF = 0.45
+AI_IMAGE_WIDTH = 640           # YOLO 분석용 축소 너비
+HARDHAT_EVERY_N_FRAMES = 3     # 안전모 pose 분석 주기
 FALL_FLOW_THRESHOLD = 8.0       # Optical flow 평균 크기 임계값
 FALL_FLOW_WIDTH = 320           # Optical flow 계산용 축소 너비 (메모리 절약)
 FALL_ASPECT_THRESHOLD = 2.0     # bbox 가로/세로 비율 (눕힌 상태 판단)

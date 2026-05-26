@@ -74,7 +74,13 @@ class VirtualFenceDetector(BaseDetector):
         self._model = model
         logger.info("VirtualFenceDetector: 모델 로드 (%s)", model_path)
 
-    def detect(self, image_bytes: bytes) -> DetectionResult:
+    def detect(
+        self,
+        image_bytes: bytes,
+        image_np: np.ndarray | None = None,
+        person_results=None,
+        coordinate_scale: float = 1.0,
+    ) -> DetectionResult:
         try:
             zones = _load_zones()
             if not zones:
@@ -84,10 +90,11 @@ class VirtualFenceDetector(BaseDetector):
                     message="등록된 위험구역 없음",
                 )
 
-            img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
-            img_np = np.array(img)
+            if image_np is None:
+                img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+                image_np = np.array(img)
 
-            results = self._model(img_np, conf=PERSON_CONF, verbose=False)[0]
+            results = person_results if person_results is not None else self._model(image_np, conf=PERSON_CONF, verbose=False)[0]
             intrusions: list[Detection] = []
 
             for box in results.boxes:
@@ -99,9 +106,11 @@ class VirtualFenceDetector(BaseDetector):
                 # 발 위치 = bbox 하단 중심점
                 foot_x = (x1 + x2) // 2
                 foot_y = y2
+                zone_foot_x = int(foot_x * coordinate_scale)
+                zone_foot_y = int(foot_y * coordinate_scale)
 
                 for zone_name, polygon in zones.items():
-                    if _point_in_polygon((foot_x, foot_y), polygon):
+                    if _point_in_polygon((zone_foot_x, zone_foot_y), polygon):
                         intrusions.append(
                             Detection(
                                 label="intrusion",
@@ -109,7 +118,7 @@ class VirtualFenceDetector(BaseDetector):
                                 bbox=[x1, y1, x2, y2],
                                 metadata={
                                     "zone": zone_name,
-                                    "foot_point": [foot_x, foot_y],
+                                    "foot_point": [zone_foot_x, zone_foot_y],
                                 },
                             )
                         )

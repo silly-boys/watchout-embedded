@@ -63,10 +63,12 @@ class HardhatDetector(BaseDetector):
         self._model = YOLO(model_path)
         logger.info("HardhatDetector: 모델 로드 (%s)", model_path)
 
-    def detect(self, image_bytes: bytes) -> DetectionResult:
+    def detect(self, image_bytes: bytes, image_np: np.ndarray | None = None) -> DetectionResult:
         try:
-            img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
-            bgr = cv2.cvtColor(np.array(img), cv2.COLOR_RGB2BGR)
+            if image_np is None:
+                img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+                image_np = np.array(img)
+            bgr = cv2.cvtColor(image_np, cv2.COLOR_RGB2BGR)
             h_img, w_img = bgr.shape[:2]
 
             results = self._model(bgr, conf=PERSON_CONF, verbose=False)[0]
