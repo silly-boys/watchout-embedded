@@ -11,9 +11,11 @@ for _d in (MODELS_DIR, ALERTS_DIR):
 # ── 모델 가중치 경로 ──────────────────────────────────────
 PERSON_MODEL = MODELS_DIR / "yolov8n.pt"          # 기본 YOLOv8 (persons)
 POSE_MODEL = MODELS_DIR / "yolov8n-pose.pt"       # 기본 YOLOv8 pose
+HARDHAT_MODEL = MODELS_DIR / "hardhat.pt"         # 선택: 안전모 전용 YOLO 모델
 
 # ── 임계값 ───────────────────────────────────────────────
 PERSON_CONF = 0.45
+HARDHAT_MODEL_CONF = 0.40
 AI_IMAGE_WIDTH = 640           # YOLO 분석용 축소 너비
 HARDHAT_IMAGE_WIDTH = 1280     # 안전모 pose 분석용 축소 너비
 HARDHAT_EVERY_N_FRAMES = 1     # 안전모 pose 분석 주기

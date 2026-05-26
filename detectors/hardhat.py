@@ -15,7 +15,7 @@ import cv2
 import numpy as np
 from PIL import Image
 
-from config import HARDHAT_MIN_PERSON_HEIGHT, PERSON_CONF, POSE_MODEL
+from config import HARDHAT_MIN_PERSON_HEIGHT, HARDHAT_MODEL, HARDHAT_MODEL_CONF, PERSON_CONF, POSE_MODEL
 from .base import BaseDetector, Detection, DetectionResult
 
 logger = logging.getLogger(__name__)
@@ -105,15 +105,63 @@ class HardhatDetector(BaseDetector):
     def __init__(self) -> None:
         from ultralytics import YOLO
 
-        model_path = str(POSE_MODEL) if POSE_MODEL.exists() else "yolov8n-pose.pt"
+        self._use_dedicated_model = HARDHAT_MODEL.exists()
+        if self._use_dedicated_model:
+            model_path = str(HARDHAT_MODEL)
+        else:
+            model_path = str(POSE_MODEL) if POSE_MODEL.exists() else "yolov8n-pose.pt"
         self._model = YOLO(model_path)
         logger.info("HardhatDetector: 모델 로드 (%s)", model_path)
+        if not self._use_dedicated_model:
+            logger.warning("HardhatDetector: %s 없음 — pose+color fallback 사용", HARDHAT_MODEL)
+
+    def _detect_with_dedicated_model(self, image_np: np.ndarray) -> DetectionResult:
+        results = self._model(image_np, conf=HARDHAT_MODEL_CONF, verbose=False)[0]
+        violations: list[Detection] = []
+        helmet_count = 0
+
+        for box in results.boxes:
+            cls_id = int(box.cls)
+            raw_name = str(results.names[cls_id])
+            label_name = _normalize_label(raw_name)
+            x1, y1, x2, y2 = map(int, box.xyxy[0].tolist())
+            confidence = float(box.conf)
+
+            if _is_no_hardhat_label(label_name):
+                violations.append(
+                    Detection(
+                        label="no_helmet",
+                        confidence=confidence,
+                        bbox=[x1, y1, x2, y2],
+                        metadata={
+                            "source": "hardhat_model",
+                            "class_name": raw_name,
+                        },
+                    )
+                )
+            elif _is_hardhat_label(label_name):
+                helmet_count += 1
+
+        triggered = len(violations) > 0
+        return DetectionResult(
+            detector=self.name,
+            triggered=triggered,
+            detections=violations,
+            message=(
+                f"안전모 미착용 {len(violations)}명 감지"
+                if triggered
+                else f"안전모 미착용 없음 (helmet={helmet_count})"
+            ),
+        )
 
     def detect(self, image_bytes: bytes, image_np: np.ndarray | None = None) -> DetectionResult:
         try:
             if image_np is None:
                 img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
                 image_np = np.array(img)
+            if self._use_dedicated_model:
+                return self._detect_with_dedicated_model(image_np)
+
             bgr = cv2.cvtColor(image_np, cv2.COLOR_RGB2BGR)
             h_img, w_img = bgr.shape[:2]
 
@@ -194,3 +242,17 @@ class HardhatDetector(BaseDetector):
         except Exception as e:
             logger.exception("HardhatDetector 오류")
             return DetectionResult(detector=self.name, triggered=False, error=str(e))
+
+
+def _normalize_label(label: str) -> str:
+    return label.lower().replace(" ", "_").replace("-", "_")
+
+
+def _is_no_hardhat_label(label: str) -> bool:
+    no_tokens = ("no_helmet", "no_hardhat", "no_hat", "without_helmet", "without_hardhat")
+    return any(token in label for token in no_tokens)
+
+
+def _is_hardhat_label(label: str) -> bool:
+    helmet_tokens = ("helmet", "hardhat", "hard_hat", "hat")
+    return any(token in label for token in helmet_tokens) and not _is_no_hardhat_label(label)

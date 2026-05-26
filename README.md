@@ -32,3 +32,11 @@ Or after setup:
 ```bash
 ./start.sh
 ```
+
+## Models
+
+- `models/yolov8n.pt`: person detector shared by fall and virtual fence checks
+- `models/yolov8n-pose.pt`: fallback pose model for hardhat checks
+- `models/hardhat.pt`: optional dedicated helmet detector
+
+`models/hardhat.pt` currently comes from `iam-tsr/yolov8n-helmet-detection` on Hugging Face. Its labels are `With Helmet` and `Without Helmet`, which are mapped by the app to helmet/no-helmet states.
