@@ -15,7 +15,7 @@ import cv2
 import numpy as np
 from PIL import Image
 
-from config import PERSON_CONF, POSE_MODEL
+from config import HARDHAT_MIN_PERSON_HEIGHT, PERSON_CONF, POSE_MODEL
 from .base import BaseDetector, Detection, DetectionResult
 
 logger = logging.getLogger(__name__)
@@ -32,7 +32,9 @@ HARDHAT_COLORS: list[tuple[np.ndarray, np.ndarray, str]] = [
     (np.array([100, 140,  80]), np.array([130, 255, 255]), "blue"),   # 파랑 (S>140)
     (np.array([60,  140,  80]), np.array([85, 255, 255]),  "green"),  # 초록 (S>140)
 ]
-HELMET_PIXEL_RATIO = 0.15    # 머리 영역 내 안전모 색 픽셀 비율 임계값
+HELMET_PIXEL_RATIO = 0.10    # 머리 영역 내 안전모 색 픽셀 비율 임계값
+WHITE_HELMET_PIXEL_RATIO = 0.22
+MIN_HEAD_PIXELS = 120
 
 # 키포인트 인덱스
 KP_NOSE = 0
@@ -40,17 +42,32 @@ KP_LEFT_EYE = 1
 KP_RIGHT_EYE = 2
 
 
-def _has_hardhat(bgr: np.ndarray) -> bool:
+def _helmet_color_score(bgr: np.ndarray) -> tuple[bool, dict]:
     """BGR 이미지 패치에서 안전모 색상 여부를 판단합니다."""
-    if bgr.size == 0:
-        return False
+    if bgr.size == 0 or bgr.shape[0] * bgr.shape[1] < MIN_HEAD_PIXELS:
+        return False, {"reason": "small_head_region"}
+
     hsv = cv2.cvtColor(bgr, cv2.COLOR_BGR2HSV)
     total = hsv.shape[0] * hsv.shape[1]
+
+    ratios = {}
     for lo, hi, _ in HARDHAT_COLORS:
+        name = _ if _ not in ("red_l", "red_h") else "red"
         ratio = np.count_nonzero(cv2.inRange(hsv, lo, hi)) / total
-        if ratio >= HELMET_PIXEL_RATIO:
-            return True
-    return False
+        ratios[name] = ratios.get(name, 0.0) + ratio
+
+    colored_ratio = sum(
+        ratios.get(name, 0.0)
+        for name in ("yellow", "orange", "red", "blue", "green")
+    )
+    white_ratio = ratios.get("white", 0.0)
+
+    has_colored_helmet = colored_ratio >= HELMET_PIXEL_RATIO
+    has_white_helmet = white_ratio >= WHITE_HELMET_PIXEL_RATIO
+    return has_colored_helmet or has_white_helmet, {
+        "helmet_color_ratio": round(colored_ratio, 3),
+        "white_ratio": round(white_ratio, 3),
+    }
 
 
 class HardhatDetector(BaseDetector):
@@ -83,6 +100,10 @@ class HardhatDetector(BaseDetector):
 
             for i, box in enumerate(results.boxes):
                 x1, y1, x2, y2 = map(int, box.xyxy[0].tolist())
+                person_h = y2 - y1
+                if person_h < HARDHAT_MIN_PERSON_HEIGHT:
+                    continue
+
                 kpts = results.keypoints.xy[i].cpu().numpy()  # (17, 2) — (x, y)
                 conf_kpts = results.keypoints.conf[i].cpu().numpy()  # (17,)
 
@@ -103,17 +124,19 @@ class HardhatDetector(BaseDetector):
                     # 키포인트 없으면 bbox 상단 30% 사용
                     eye_level = y1 + (y2 - y1) // 3
 
-                # 안전모 영역: y1 ~ eye_level, 가로 중앙 60%
-                head_top = max(0, y1)
-                head_bot = max(head_top + 5, eye_level)
+                # 안전모 영역: bbox 상단에서 눈 주변까지 약간 넓게 사용
+                head_h = max(1, y2 - y1)
+                head_top = max(0, y1 - int(head_h * 0.03))
+                head_bot = max(head_top + 5, min(y2, eye_level + int(head_h * 0.08)))
                 cx = (x1 + x2) // 2
-                hw = (x2 - x1) // 3
+                hw = int((x2 - x1) * 0.42)
                 head_left = max(0, cx - hw)
                 head_right = min(w_img, cx + hw)
 
                 head_patch = bgr[head_top:head_bot, head_left:head_right]
+                has_hardhat, color_meta = _helmet_color_score(head_patch)
 
-                if not _has_hardhat(head_patch):
+                if not has_hardhat:
                     violations.append(
                         Detection(
                             label="no_helmet",
@@ -121,6 +144,7 @@ class HardhatDetector(BaseDetector):
                             bbox=[x1, y1, x2, y2],
                             metadata={
                                 "head_region": [head_left, head_top, head_right, head_bot],
+                                **color_meta,
                             },
                         )
                     )

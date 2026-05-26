@@ -7,7 +7,14 @@ import cv2
 import numpy as np
 from PIL import Image
 
-from config import AI_IMAGE_WIDTH, ALERTS_DIR, HARDHAT_EVERY_N_FRAMES, PERSON_CONF, PERSON_MODEL
+from config import (
+    AI_IMAGE_WIDTH,
+    ALERTS_DIR,
+    HARDHAT_EVERY_N_FRAMES,
+    HARDHAT_IMAGE_WIDTH,
+    PERSON_CONF,
+    PERSON_MODEL,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -34,15 +41,20 @@ def init_detectors():
     }
 
 
-def decode_analysis_image(image_bytes: bytes) -> tuple[np.ndarray, float]:
+def resize_for_width(image_np: np.ndarray, width: int) -> tuple[np.ndarray, float]:
+    h, w = image_np.shape[:2]
+    if width <= 0 or w <= width:
+        return image_np, 1.0
+    resized_h = max(1, int(h * (width / w)))
+    resized = cv2.resize(image_np, (width, resized_h), interpolation=cv2.INTER_AREA)
+    return resized, w / width
+
+
+def decode_analysis_image(image_bytes: bytes) -> tuple[np.ndarray, float, np.ndarray]:
     img = Image.open(BytesIO(image_bytes)).convert("RGB")
     image_np = np.array(img)
-    h, w = image_np.shape[:2]
-    if AI_IMAGE_WIDTH <= 0 or w <= AI_IMAGE_WIDTH:
-        return image_np, 1.0
-    analysis_h = max(1, int(h * (AI_IMAGE_WIDTH / w)))
-    resized = cv2.resize(image_np, (AI_IMAGE_WIDTH, analysis_h), interpolation=cv2.INTER_AREA)
-    return resized, w / AI_IMAGE_WIDTH
+    resized, scale = resize_for_width(image_np, AI_IMAGE_WIDTH)
+    return resized, scale, image_np
 
 
 def scale_result_boxes(result, scale: float) -> None:
@@ -96,7 +108,7 @@ def analysis_loop(detectors, frames, analyses, stop_event, min_interval_sec: flo
         timings = {}
 
         try:
-            image_np, image_scale = decode_analysis_image(frame)
+            image_np, image_scale, original_np = decode_analysis_image(frame)
         except Exception as exc:
             logger.exception("frame decode failed")
             analyses.set({
@@ -132,7 +144,15 @@ def analysis_loop(detectors, frames, analyses, stop_event, min_interval_sec: flo
                 if name == "hardhat":
                     if frame_seq % HARDHAT_EVERY_N_FRAMES != 0:
                         continue
-                    result = detector.detect(frame, image_np=image_np)
+                    hardhat_np, hardhat_scale = resize_for_width(original_np, HARDHAT_IMAGE_WIDTH)
+                    result = detector.detect(frame, image_np=hardhat_np)
+                    scale_result_boxes(result, hardhat_scale)
+                    serialized = serialize_result(result)
+                    timings[name] = round((time.time() - detector_started) * 1000, 1)
+                    summary[name] = serialized
+                    if serialized["triggered"]:
+                        alerts.append(name)
+                    continue
                 elif name in ("virtual_fence", "fall"):
                     if person_results is None:
                         continue
