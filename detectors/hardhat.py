@@ -23,17 +23,17 @@ logger = logging.getLogger(__name__)
 # ── 안전모 HSV 범위 ──────────────────────────────────────────
 # 각 항목: (lower, upper) in HSV (H: 0-180, S: 0-255, V: 0-255)
 HARDHAT_COLORS: list[tuple[np.ndarray, np.ndarray, str]] = [
-    # 채도(S) 기준을 높여 피부톤(S<120) 오탐 방지
-    (np.array([18, 160, 120]), np.array([38, 255, 255]), "yellow"),   # 노랑 (S>160)
-    (np.array([0,   0, 210]), np.array([180,  50, 255]), "white"),    # 흰색 (V>210, S<50)
-    (np.array([5,  160, 120]), np.array([18, 255, 255]), "orange"),   # 주황 (S>160)
-    (np.array([0,  160, 100]), np.array([8, 255, 255]),  "red_l"),    # 빨강(저) (S>160)
-    (np.array([170, 160, 100]), np.array([180, 255, 255]), "red_h"),  # 빨강(고) (S>160)
-    (np.array([100, 140,  80]), np.array([130, 255, 255]), "blue"),   # 파랑 (S>140)
-    (np.array([60,  140,  80]), np.array([85, 255, 255]),  "green"),  # 초록 (S>140)
+    (np.array([15,  80,  80]), np.array([42, 255, 255]), "yellow"),
+    (np.array([0,    0, 170]), np.array([180,  85, 255]), "white"),
+    (np.array([3,   90,  80]), np.array([24, 255, 255]), "orange"),
+    (np.array([0,   90,  70]), np.array([10, 255, 255]), "red_l"),
+    (np.array([165, 90,  70]), np.array([180, 255, 255]), "red_h"),
+    (np.array([92,  70,  55]), np.array([135, 255, 255]), "blue"),
+    (np.array([45,  70,  55]), np.array([90, 255, 255]), "green"),
 ]
-HELMET_PIXEL_RATIO = 0.10    # 머리 영역 내 안전모 색 픽셀 비율 임계값
-WHITE_HELMET_PIXEL_RATIO = 0.22
+HELMET_PIXEL_RATIO = 0.055
+WHITE_HELMET_PIXEL_RATIO = 0.16
+MIN_HELMET_BLOB_RATIO = 0.035
 MIN_HEAD_PIXELS = 120
 
 # 키포인트 인덱스
@@ -51,23 +51,52 @@ def _helmet_color_score(bgr: np.ndarray) -> tuple[bool, dict]:
     total = hsv.shape[0] * hsv.shape[1]
 
     ratios = {}
+    colored_mask = np.zeros(hsv.shape[:2], dtype=np.uint8)
+    white_mask = np.zeros(hsv.shape[:2], dtype=np.uint8)
     for lo, hi, _ in HARDHAT_COLORS:
         name = _ if _ not in ("red_l", "red_h") else "red"
-        ratio = np.count_nonzero(cv2.inRange(hsv, lo, hi)) / total
+        mask = cv2.inRange(hsv, lo, hi)
+        ratio = np.count_nonzero(mask) / total
         ratios[name] = ratios.get(name, 0.0) + ratio
+        if name == "white":
+            white_mask = cv2.bitwise_or(white_mask, mask)
+        else:
+            colored_mask = cv2.bitwise_or(colored_mask, mask)
 
     colored_ratio = sum(
         ratios.get(name, 0.0)
         for name in ("yellow", "orange", "red", "blue", "green")
     )
     white_ratio = ratios.get("white", 0.0)
+    colored_blob_ratio = _largest_blob_ratio(colored_mask)
+    white_blob_ratio = _largest_blob_ratio(white_mask)
 
-    has_colored_helmet = colored_ratio >= HELMET_PIXEL_RATIO
-    has_white_helmet = white_ratio >= WHITE_HELMET_PIXEL_RATIO
+    has_colored_helmet = (
+        colored_ratio >= HELMET_PIXEL_RATIO
+        or colored_blob_ratio >= MIN_HELMET_BLOB_RATIO
+    )
+    has_white_helmet = (
+        white_ratio >= WHITE_HELMET_PIXEL_RATIO
+        or white_blob_ratio >= MIN_HELMET_BLOB_RATIO * 1.4
+    )
     return has_colored_helmet or has_white_helmet, {
-        "helmet_color_ratio": round(colored_ratio, 3),
-        "white_ratio": round(white_ratio, 3),
+        "helmet_color_ratio": round(float(colored_ratio), 3),
+        "helmet_blob_ratio": round(colored_blob_ratio, 3),
+        "white_ratio": round(float(white_ratio), 3),
+        "white_blob_ratio": round(white_blob_ratio, 3),
     }
+
+
+def _largest_blob_ratio(mask: np.ndarray) -> float:
+    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, np.ones((3, 3), np.uint8))
+    count = int(np.count_nonzero(mask))
+    if count == 0:
+        return 0.0
+    _num, _labels, stats, _centroids = cv2.connectedComponentsWithStats(mask, connectivity=8)
+    if len(stats) <= 1:
+        return 0.0
+    largest = max(int(s[cv2.CC_STAT_AREA]) for s in stats[1:])
+    return largest / mask.size
 
 
 class HardhatDetector(BaseDetector):
@@ -124,10 +153,12 @@ class HardhatDetector(BaseDetector):
                     # 키포인트 없으면 bbox 상단 30% 사용
                     eye_level = y1 + (y2 - y1) // 3
 
-                # 안전모 영역: bbox 상단에서 눈 주변까지 약간 넓게 사용
+                # 안전모 영역: bbox 상단 35%와 keypoint 기반 영역 중 더 넓은 쪽을 사용
                 head_h = max(1, y2 - y1)
                 head_top = max(0, y1 - int(head_h * 0.03))
-                head_bot = max(head_top + 5, min(y2, eye_level + int(head_h * 0.08)))
+                keypoint_bot = eye_level + int(head_h * 0.10)
+                fallback_bot = y1 + int(head_h * 0.35)
+                head_bot = max(head_top + 5, min(y2, max(keypoint_bot, fallback_bot)))
                 cx = (x1 + x2) // 2
                 hw = int((x2 - x1) * 0.42)
                 head_left = max(0, cx - hw)
