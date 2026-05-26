@@ -23,17 +23,17 @@ logger = logging.getLogger(__name__)
 # ── 안전모 HSV 범위 ──────────────────────────────────────────
 # 각 항목: (lower, upper) in HSV (H: 0-180, S: 0-255, V: 0-255)
 HARDHAT_COLORS: list[tuple[np.ndarray, np.ndarray, str]] = [
-    (np.array([15,  80,  80]), np.array([42, 255, 255]), "yellow"),
-    (np.array([0,    0, 170]), np.array([180,  85, 255]), "white"),
-    (np.array([3,   90,  80]), np.array([24, 255, 255]), "orange"),
-    (np.array([0,   90,  70]), np.array([10, 255, 255]), "red_l"),
-    (np.array([165, 90,  70]), np.array([180, 255, 255]), "red_h"),
-    (np.array([92,  70,  55]), np.array([135, 255, 255]), "blue"),
-    (np.array([45,  70,  55]), np.array([90, 255, 255]), "green"),
+    (np.array([16, 110,  95]), np.array([40, 255, 255]), "yellow"),
+    (np.array([0,    0, 195]), np.array([180,  65, 255]), "white"),
+    (np.array([4,  115,  90]), np.array([22, 255, 255]), "orange"),
+    (np.array([0,  115,  80]), np.array([10, 255, 255]), "red_l"),
+    (np.array([168,115,  80]), np.array([180, 255, 255]), "red_h"),
+    (np.array([95,  95,  70]), np.array([132, 255, 255]), "blue"),
+    (np.array([50,  95,  70]), np.array([88, 255, 255]), "green"),
 ]
-HELMET_PIXEL_RATIO = 0.055
-WHITE_HELMET_PIXEL_RATIO = 0.16
-MIN_HELMET_BLOB_RATIO = 0.035
+HELMET_PIXEL_RATIO = 0.08
+WHITE_HELMET_PIXEL_RATIO = 0.24
+MIN_HELMET_BLOB_RATIO = 0.055
 MIN_HEAD_PIXELS = 120
 
 # 키포인트 인덱스

@@ -92,6 +92,32 @@ def serialize_result(result) -> dict:
     }
 
 
+def format_timings(timings: dict) -> str:
+    if not timings:
+        return "timings=none"
+    parts = [f"{name}={ms:.1f}ms" for name, ms in timings.items()]
+    return "timings: " + ", ".join(parts)
+
+
+def format_hardhat_debug(summary: dict) -> list[str]:
+    hardhat = summary.get("hardhat")
+    if not hardhat:
+        return []
+    lines = []
+    for idx, detection in enumerate(hardhat.get("detections", []), start=1):
+        meta = detection.get("metadata", {})
+        lines.append(
+            "  - hardhat debug "
+            f"#{idx}: label={detection.get('label')} "
+            f"color={meta.get('helmet_color_ratio')} "
+            f"blob={meta.get('helmet_blob_ratio')} "
+            f"white={meta.get('white_ratio')} "
+            f"white_blob={meta.get('white_blob_ratio')} "
+            f"head={meta.get('head_region')}"
+        )
+    return lines
+
+
 def analysis_loop(detectors, frames, analyses, stop_event, min_interval_sec: float) -> None:
     last_analyzed_seq = 0
     while not stop_event.is_set():
@@ -197,12 +223,18 @@ def analysis_loop(detectors, frames, analyses, stop_event, min_interval_sec: flo
         last_analyzed_seq = frame_seq
 
         if alerts:
-            print(f"[{timestamp}] 이상 감지: {', '.join(alerts)}")
+            print(f"[{timestamp}] 이상 감지: {', '.join(alerts)} ({analysis['elapsed_ms']}ms)")
+            print(f"  {format_timings(timings)}")
             for name in alerts:
                 print(f"  - {name}: {summary[name]['message']}")
+            for line in format_hardhat_debug(summary):
+                print(line)
             save_alert(timestamp, alerts, summary)
         else:
             print(f"[{timestamp}] 이상 없음 ({analysis['elapsed_ms']}ms)")
+            print(f"  {format_timings(timings)}")
+            for line in format_hardhat_debug(summary):
+                print(line)
 
         remaining = max(0.0, min_interval_sec - (time.time() - started))
         stop_event.wait(remaining)
