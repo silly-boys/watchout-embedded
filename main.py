@@ -11,6 +11,7 @@ configure_native_runtime()
 
 from ai_runner import analysis_loop, init_detectors
 from camera import capture_loop, create_camera
+from fence_sync import poll_fence_loop
 from state import AnalysisStore, FrameStore
 from stream_server import run_server
 
@@ -46,6 +47,11 @@ def main() -> None:
     threading.Thread(
         target=analysis_loop,
         args=(detectors, frames, analyses, stop_event, AI_MIN_INTERVAL),
+        daemon=True,
+    ).start()
+    threading.Thread(
+        target=poll_fence_loop,
+        args=(CAMERA_SIZE, stop_event),
         daemon=True,
     ).start()
 

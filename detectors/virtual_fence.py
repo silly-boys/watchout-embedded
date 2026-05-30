@@ -45,6 +45,10 @@ def set_zone(name: str, polygon: list[list[int]]) -> None:
     _save_zones(zones)
 
 
+def replace_zones(zones: dict[str, list[list[int]]]) -> None:
+    _save_zones(zones)
+
+
 def delete_zone(name: str) -> bool:
     zones = _load_zones()
     if name not in zones:

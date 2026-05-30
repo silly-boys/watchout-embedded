@@ -11,6 +11,7 @@ Raspberry Pi camera application that streams live WebRTC video and analyzes the 
    - `GET /`: browser viewer
    - `POST /offer`: WebRTC signaling endpoint
 5. Alerts are saved as JSON files under `alerts/`.
+6. `fence_sync.py` polls `https://watchout.cher1shrxd.me/api/fence` every 5 minutes and writes the returned normalized polygon into `fence_config.json` as pixel coordinates.
 
 ## Environment Variables
 
