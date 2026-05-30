@@ -15,6 +15,7 @@ from config import (
     PERSON_CONF,
     PERSON_MODEL,
 )
+from event_client import EventReporter
 
 logger = logging.getLogger(__name__)
 
@@ -126,6 +127,7 @@ def format_hardhat_debug(summary: dict) -> list[str]:
 
 def analysis_loop(detectors, frames, analyses, stop_event, min_interval_sec: float) -> None:
     last_analyzed_seq = 0
+    event_reporter = EventReporter()
     while not stop_event.is_set():
         started = time.time()
         frame, frame_seq = frames.get()
@@ -236,6 +238,7 @@ def analysis_loop(detectors, frames, analyses, stop_event, min_interval_sec: flo
             for line in format_hardhat_debug(summary):
                 print(line)
             save_alert(timestamp, alerts, summary)
+            event_reporter.report_alerts(alerts)
         else:
             print(f"[{timestamp}] 이상 없음 ({analysis['elapsed_ms']}ms)")
             print(f"  {format_timings(timings)}")

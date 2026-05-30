@@ -33,3 +33,7 @@ ANOMALY_SSIM_THRESHOLD = 0.85   # SSIM 유사도 임계값 (1.0=동일, 낮을�
 FENCE_API_URL = "https://watchout.cher1shrxd.me/api/fence"
 FENCE_POLL_INTERVAL_SEC = 300
 FENCE_REMOTE_ZONE_NAME = "remote_fence"
+
+# ── 이벤트 전송 ───────────────────────────────────────────
+EVENT_API_URL = "https://watchout.cher1shrxd.me/api/events"
+EVENT_POST_COOLDOWN_SEC = 60
