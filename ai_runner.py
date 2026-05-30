@@ -29,7 +29,13 @@ def init_detectors():
         VirtualFenceDetector,
     )
 
-    torch.set_num_threads(2)
+    torch.set_num_threads(1)
+    try:
+        torch.set_num_interop_threads(1)
+    except RuntimeError:
+        pass
+    cv2.setNumThreads(1)
+
     person_model_path = str(PERSON_MODEL) if PERSON_MODEL.exists() else "yolov8n.pt"
     person_model = YOLO(person_model_path)
 
