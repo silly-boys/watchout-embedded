@@ -16,6 +16,7 @@ from config import (
     PERSON_MODEL,
 )
 from event_client import EventReporter
+from detectors.demo_overfit import apply_demo_overfit
 
 logger = logging.getLogger(__name__)
 
@@ -181,6 +182,7 @@ def analysis_loop(detectors, frames, analyses, stop_event, min_interval_sec: flo
                     hardhat_np, hardhat_scale = resize_for_width(original_np, HARDHAT_IMAGE_WIDTH)
                     result = detector.detect(frame, image_np=hardhat_np)
                     scale_result_boxes(result, hardhat_scale)
+                    result = apply_demo_overfit(name, result, frame)
                     serialized = serialize_result(result)
                     timings[name] = round((time.time() - detector_started) * 1000, 1)
                     summary[name] = serialized
@@ -204,6 +206,7 @@ def analysis_loop(detectors, frames, analyses, stop_event, min_interval_sec: flo
                 else:
                     result = detector.detect(frame)
                 scale_result_boxes(result, image_scale)
+                result = apply_demo_overfit(name, result, frame)
                 serialized = serialize_result(result)
             except Exception as exc:
                 logger.exception("%s detector failed", name)
